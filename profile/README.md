@@ -361,13 +361,7 @@ EVM uses implicit `msg.sender` for access control — every call knows its calle
 ### 3. Cross-contract error propagation (`SG-E002`)
 Soroban's host function call model means errors from sub-invocations **do not automatically bubble**. A missing `?` or unmatched `Result` silently discards errors, leaving contract state partially mutated with no signal to the caller.
 
-<br/>
 
----
-
-## 📜 License
-
-MIT. See [LICENSE](LICENSE).
 
 
 
