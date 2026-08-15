@@ -1,367 +1,198 @@
 # SoroGuard
 
+**AI-assisted adversarial testing and simulation for Soroban smart contracts.**
 
-## 🔍 What is SoroGuard?
+SoroGuard helps Soroban developers find logic and authorization bugs by generating and executing realistic, adversarial test scenarios. It reads your contract's exported interface, uses AI to suggest scenarios worth testing, scaffolds them into readable Rust tests, and lets you run one-off simulations from the CLI — including in plain English.
 
-**SoroGuard** is a **zero-install, Soroban-native vulnerability scanner** that plugs into any CI/CD pipeline with a single line of YAML. It catches the security pitfalls that generic EVM tools miss entirely — because Soroban's storage model, authorization framework, and cross-contract execution semantics are fundamentally different.
-
-We ship as a **pre-built static binary** (no Rust toolchain required), a **GitHub Action**, a **VS Code extension**, and a **community YAML rule registry** so that anyone — regardless of compiler internals knowledge — can contribute new detectors.
-
-> SoroGuard is explicitly **complementary to [CoinFabrik Scout](https://github.com/CoinFabrik/scout)**, not a replacement. Scout is the deep static analysis layer. SoroGuard is the zero-friction CI layer. **Use both for defence in depth.**
-
-<br/>
-
-## 🆚 How SoroGuard fits the ecosystem
-
-| | CoinFabrik Scout | **SoroGuard** |
-|---|---|---|
-| **Install** | Requires local Rust toolchain | ✅ Zero-install single binary |
-| **Rules** | Dylint compiler plugins (Rust) | ✅ YAML pattern matching |
-| **Scope** | Multi-chain (Ink!, Soroban, EVM) | ✅ Soroban-only, deep domain |
-| **Contributor bar** | Rust compiler internals | ✅ YAML + basic Rust |
-| **CI integration** | Manual setup | ✅ 1-line GitHub Action |
-| **PR badges** | — | ✅ Native Wave-compatible badges |
-| **VS Code** | — | ✅ Inline squigglies as you type |
-
-<br/>
+> **Not a static analyzer.** SoroGuard doesn't scan your code for vulnerability patterns — [Scout](https://github.com/CoinFabrik/scout-soroban) already does that well. SoroGuard executes your contract against real scenarios to see how it actually behaves. Use both — they cover different parts of the security workflow.
 
 ---
 
-## ⚡ Quickstart
+## Why
 
-### GitHub Action _(recommended)_
+Soroban's SDK gives you solid testing primitives (`testutils`, local sandbox mode), but you still decide what to test and write the setup for every scenario by hand. Auth checks, edge cases, boundary values — it's all boilerplate that's easy to skip under deadline pressure, and skipping it is how bugs make it to mainnet.
 
-Drop this into any repo that contains Soroban contracts:
+SoroGuard closes that gap two ways: deterministic scaffolding for the failure modes every contract shares, and an AI layer that looks at *your specific contract* and suggests what else is worth testing — things a generic template wouldn't think to check.
 
-```yaml
-# .github/workflows/soroguard.yml
-name: SoroGuard Security Scan
+Importantly: **AI suggests what to test. It never decides what "secure" means.** Every suggested scenario is converted into a real test that actually runs against your contract — the result is determined by execution, not by a model's opinion.
 
-on: [push, pull_request]
+---
 
-jobs:
-  scan:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+## Status
 
-      - uses: soroguard/action@v1
-        with:
-          fail-on: high          # critical | high | medium | low
-          post-pr-comment: true  # posts a findings summary comment on every PR
-          badge: true            # updates the SoroGuard status badge
-```
+SoroGuard is early-stage.
 
-<br/>
+- **Deterministic scaffolding and CLI simulation** — stable, in daily use
+- **AI-assisted features** (scenario suggestions, natural-language simulation, failure explanations) — **actively in development.** The interfaces below reflect the intended design; expect rough edges and rapid iteration.
 
-### CLI
+The core tool works fully with AI disabled — it's an added layer, not a dependency.
+
+## Features
+
+### Deterministic core
+
+- **Auto-scaffolded negative-path tests** — parses your contract's interface and generates `testutils`-based Rust tests for common failure modes per function (unauthorized caller, missing `require_auth`, wrong signer, invalid/boundary inputs)
+- **CLI simulation** — run one-off calls against a local sandbox without writing a test file:
+  ```bash
+  soroguard sim transfer --as unauthorized_user
+  soroguard sim withdraw --amount 999999999
+  ```
+
+### AI-assisted (in development)
+
+- **Scenario generation** — SoroGuard analyzes your contract's functions and suggests scenarios specific to it, not just generic templates:
+  ```text
+  $ soroguard generate ./contracts/token --ai
+
+  Analyzing contract...
+  12 exported functions found. 5 involve authorization.
+
+  Suggested scenarios:
+  ✓ Unauthorized mint
+  ✓ Transfer after authorization is revoked
+  ✓ Burn exceeding balance
+  ✓ Transfer with maximum amount (overflow check)
+  ```
+  Suggestions are turned into real, executable tests — not left as text.
+
+- **Natural-language simulation** — describe a scenario, SoroGuard runs it:
+  ```bash
+  soroguard ask "Try to transfer 1000 tokens from an account that hasn't authorized it"
+  ```
+
+- **Failure explanations** — plain-language read on why a scenario failed:
+  ```text
+  Scenario: Unauthorized transfer
+  Expected: Authorization failure
+  Observed: Transaction succeeded
+
+  Suggested area to investigate:
+  Verify the transfer operation requires authorization from
+  the account whose balance is being modified.
+  ```
+  Explanations are a starting point for investigation, not a verdict — always confirm against the actual test output.
+
+## Installation
 
 ```bash
-# Download binary (Linux x86_64)
-curl -sSL https://github.com/soroguard/soroguard/releases/latest/download/soroguard-linux-x86_64 \
-  -o soroguard && chmod +x soroguard
-
-# Scan all contracts in a directory
-./soroguard scan contracts/
-
-# Output as SARIF (for GitHub Advanced Security code scanning)
-./soroguard scan contracts/ --format sarif -o results.sarif
-
-# Scan a single file with verbose output
-./soroguard scan contracts/token.rs --verbose
-
-# Filter by severity
-./soroguard scan contracts/ --min-severity high
+cargo install soroguard
 ```
 
-<br/>
+Requires a Rust environment set up for Soroban development (Rust toolchain + Soroban CLI). AI features require configuring a supported provider — see `docs/ai.md` (coming soon).
 
-### VS Code Extension
+## Quick Start
 
-Install the **SoroGuard** extension from the VS Code Marketplace. Inline squigglies appear on vulnerable patterns as you type, with hover cards explaining each finding and a suggested fix — without leaving your editor.
+```bash
+# Generate a baseline test suite from your contract's interface
+soroguard scaffold ./contracts/my_contract
+cargo test
 
-```
-ext install soroguard.soroguard-vscode
-```
+# Add AI-suggested scenarios on top
+soroguard generate ./contracts/my_contract --ai
 
-<br/>
+# Simulate a specific scenario without writing a test
+soroguard sim my_function --as some_address --arg amount=1000
 
----
-
-## 🛡 Detectors
-
-**20 detectors** across four vulnerability families. Every detector ships with a vulnerable fixture and a fixed fixture in `contracts/fixtures/` that you can run against locally.
-
-<br/>
-
-### 🔐 Access Control
-
-| ID | Description | Severity |
-|---|---|---|
-| `SG-A001` | Missing `require_auth()` on privileged entrypoint | 🔴 Critical |
-| `SG-A002` | Admin key stored in temporary storage (survives 0 ledgers after TTL) | 🔴 Critical |
-| `SG-A003` | Role check performed **after** state mutation | 🟠 High |
-| `SG-A004` | Missing `require_auth_for_args()` on batch operations | 🟠 High |
-| `SG-A005` | Unrestricted contract upgrade entrypoint | 🔴 Critical |
-
-> **Why this matters**: Soroban uses an explicit `require_auth()` model instead of EVM's implicit `msg.sender`. Developers migrating from EVM patterns routinely forget to call it — leaving privileged entrypoints wide open.
-
-<br/>
-
-### 📦 Storage Lifecycle
-
-| ID | Description | Severity |
-|---|---|---|
-| `SG-C001` | Persistent storage entry missing `extend_ttl()` call | 🔴 Critical |
-| `SG-C002` | Balance or critical state stored in temporary storage (~80 ledger TTL) | 🔴 Critical |
-| `SG-C003` | TTL extension in hot path — should be conditional | 🟡 Medium |
-| `SG-C004` | Unbounded map growth in persistent storage | 🟠 High |
-| `SG-C005` | Instance storage used for per-user data (should be persistent) | 🟡 Medium |
-
-> **Why this matters**: Soroban's three-tier storage model (temporary, persistent, instance) has no EVM equivalent. Storing balances in temporary storage or forgetting to extend TTL silently deletes state — no exception, no event, no trace.
-
-<br/>
-
-### ➕ Arithmetic & Overflow
-
-| ID | Description | Severity |
-|---|---|---|
-| `SG-M001` | Unchecked integer arithmetic — use `checked_add` / `checked_mul` | 🟠 High |
-| `SG-M002` | Division before multiplication (precision loss) | 🟡 Medium |
-| `SG-M003` | Casting `i128` → `u64` without bounds check | 🟠 High |
-| `SG-M004` | Fixed-point scaling constant mismatch (7 vs 8 decimals) | 🟠 High |
-| `SG-M005` | Timestamp used as randomness source | 🟡 Medium |
-
-<br/>
-
-### 🔗 Cross-Contract & Events
-
-| ID | Description | Severity |
-|---|---|---|
-| `SG-E001` | Cross-contract call result ignored (no `?` or match) | 🟠 High |
-| `SG-E002` | Unchecked error propagation in cross-contract invocation | 🟠 High |
-| `SG-E003` | Missing event emission on state-changing operation | 🟡 Medium |
-| `SG-E004` | Hard-coded contract ID (should use env address) | 🟡 Medium |
-| `SG-E005` | Auth context not propagated to sub-invocation | 🟠 High |
-
-> **Why this matters**: Soroban's host function call model means errors from sub-invocations don't automatically bubble. An ignored `Result` is a silent failure that leaves state inconsistent.
-
-<br/>
-
----
-
-## 📋 PR Badge & Comment
-
-When `post-pr-comment: true` is set, SoroGuard posts a structured comment to every PR so reviewers see findings without leaving GitHub:
-
-```
-## SoroGuard scan results
-
-✅ 0 critical   ✅ 0 high   ⚠️ 2 medium   ℹ️ 1 low
-
-| Detector | File              | Line | Severity |
-|----------|-------------------|------|----------|
-| SG-C003  | contracts/token.rs | 47  | Medium   |
-| SG-M002  | contracts/amm.rs   | 112 | Medium   |
-| SG-E003  | contracts/token.rs | 89  | Low      |
-
-[View full SARIF report →](https://github.com/...)
+# Or just ask
+soroguard ask "What happens if I withdraw more than the account holds?"
 ```
 
-Badge updates are Wave-compatible and render on your repo's README and Drips profile automatically.
+## How It Works
 
-<br/>
-
----
-
-## 🗂 Community Rule Registry
-
-Rules live in `registry/rules/` as **human-readable YAML files**. No Rust compiler internals required — anyone who understands a vulnerability pattern can contribute a new detector.
-
-### Rule Schema
-
-```yaml
-id: SG-C001
-name: missing-ttl-extension
-severity: critical           # critical | high | medium | low | info
-family: storage              # auth | storage | math | interop
-description: >
-  Persistent storage entries expire if TTL is not extended.
-  Contracts that write to persistent storage must call
-  env.storage().persistent().extend_ttl() to prevent silent data loss.
-message: "Persistent storage write without extend_ttl() call detected"
-fix_hint: >
-  Add `env.storage().persistent().extend_ttl(key, min_ttl, max_ttl);`
-  after each set() call, or in a dedicated housekeeping function.
-pattern:
-  kind: call_expression
-  callee_matches: "\.set\("
-  context: persistent_storage
-  missing_sibling:
-    callee_matches: "extend_ttl"
-    within_scope: function
-references:
-  - https://developers.stellar.org/docs/smart-contracts/storage/ttl
-test_contracts:
-  vulnerable: contracts/fixtures/SG-C001-vulnerable.rs
-  fixed:      contracts/fixtures/SG-C001-fixed.rs
+```text
+              Soroban Contract
+                     │
+                     ▼
+           Contract Interface
+                     │
+          ┌──────────┴──────────┐
+          ▼                     ▼
+    Deterministic          AI-assisted
+     scenarios              scenarios
+          │                     │
+          └──────────┬──────────┘
+                     ▼
+              Test Generation
+                     │
+                     ▼
+        Soroban Test Environment
+                     │
+                     ▼
+              Actual Results
+                     │
+             ┌───────┴───────┐
+             ▼               ▼
+         Rust Tests     AI Explanation
+                        (optional)
 ```
 
-Every merged rule is automatically bundled into the next binary release.
+1. SoroGuard parses your contract's exported functions and interface
+2. Deterministic rules generate baseline negative-path scenarios; the AI layer (when enabled) suggests contract-specific ones on top
+3. All scenarios — deterministic or AI-suggested — become real Rust tests or CLI simulations
+4. Tests run against the local Soroban sandbox; SoroGuard records the actual behavior
+5. AI can optionally explain failures in plain language
+6. Generated tests are ordinary, readable, editable Rust — never a black box
 
-<br/>
+## Project Structure
 
----
-
-## 🏗 Architecture
-
-```
+```text
 soroguard/
-├── src/
-│   ├── ast/                    # syn-based AST parsing
-│   ├── detectors/              # Built-in Rust detector implementations
-│   └── engine/                 # YAML rule engine (pattern matcher)
+├── crates/
+│   ├── cli/          # Command-line interface
+│   ├── core/          # Test/scenario orchestration
+│   ├── parser/        # Soroban contract interface parsing
+│   ├── generator/      # Rust test scaffolding
+│   ├── simulator/      # Local sandbox execution
+│   └── ai/            # AI-assisted scenario generation & explanations (in development)
 │
-├── registry/
-│   └── rules/                  # Community YAML rules (one file per detector)
+├── examples/
+│   └── token/         # Example contract used for development/testing
 │
-├── contracts/
-│   └── fixtures/               # 40 test contracts (vulnerable + fixed per detector)
+├── tests/
+│   └── integration/     # End-to-end SoroGuard tests
 │
-├── vscode-extension/           # VS Code LSP extension (TypeScript)
-├── action/                     # GitHub Action entrypoint (shell + binary)
-│
-└── .github/
-    └── workflows/
-        └── self-scan.yml       # SoroGuard scanning its own contracts on every push
+├── Cargo.toml
+├── README.md
+└── LICENSE
 ```
 
-The binary embeds all built-in detectors **and** loads YAML rules from `registry/rules/` at startup, so rule updates ship without recompiling. The VS Code extension runs the same binary in language server mode and surfaces findings as diagnostics.
+Crates are split so contributors can work on one part of the pipeline — parsing, generation, simulation, or AI — without needing to understand the whole codebase.
 
-<br/>
+## SoroGuard + Scout
 
----
+| Tool | Focus |
+|---|---|
+| Scout | Static vulnerability detection |
+| SoroGuard | AI-assisted dynamic testing |
 
-## 🧪 Dogfooding
+Scout flags dangerous code patterns without running the contract. SoroGuard executes it against generated scenarios — deterministic and AI-suggested — to observe actual behavior. Using both gives broader coverage than either alone.
 
-SoroGuard scans its own contracts on every push via `.github/workflows/self-scan.yml`. The `contracts/fixtures/` directory contains intentionally vulnerable contracts — clone the repo and run a scan locally as your first exercise:
+## What SoroGuard Does Not Do
 
-```bash
-# Should produce a CRITICAL finding
-./soroguard scan contracts/fixtures/SG-A001-vulnerable.rs
-# → [CRITICAL] SG-A001: Missing require_auth() on fn transfer (line 23)
+SoroGuard doesn't claim to prove a contract is secure, and doesn't replace manual code review, static analysis, formal verification, or a security audit. AI-generated scenarios and explanations can be incomplete or wrong — they're a testing aid, not authoritative security advice. Treat them as a starting point, and always trust the actual test execution over the AI's commentary.
 
-# Should be clean
-./soroguard scan contracts/fixtures/SG-A001-fixed.rs
-# → No findings. Clean.
+## Roadmap
 
-# Run all fixtures as a test suite
-./soroguard scan contracts/fixtures/ --format summary
-# → 20 vulnerable contracts: 20 findings | 20 fixed contracts: 0 findings ✓
-```
+**Testing**
+- [ ] Auth scenario matrix — generate every "who can call what" combination and test each
+- [ ] Property-based fuzzing — randomized inputs checked against invariants (balance never negative, supply conserved)
+- [ ] Cross-contract scenario testing — mock a second contract, test call-in/call-out behavior
+- [ ] Gas/resource regression tracking
+- [ ] Snapshot/diff testing across contract upgrades
 
-<br/>
+**AI**
+- [ ] AI-assisted invariant suggestions (properties that should always hold)
+- [ ] Context-aware generation from contract docs/comments
+- [ ] AI-assisted test prioritization
 
----
+**Developer experience**
+- [ ] CI/CD integration (GitHub Action)
+- [ ] VS Code extension
 
-## 🤝 Contributing
+## Contributing
 
-SoroGuard is a community-first project. All four contribution tiers produce value — from newcomers to deep experts.
+This is early and the roadmap is open. Good first contributions: new negative-path scenario types, additional example contracts, or picking up any unchecked roadmap item — deterministic or AI-side. Check open issues or start a discussion before taking on something larger.
 
-### Tier 1 — Test contract pairs _(good first issue)_
+## License
 
-Each detector needs a `vulnerable.rs` and a `fixed.rs` fixture. These are self-contained, independently verifiable by CI, and labelled `good-first-issue` in the tracker.
-
-**What you need:** intermediate Rust + basic Soroban SDK familiarity.
-
-```bash
-# File naming convention
-contracts/fixtures/SG-XXXX-vulnerable.rs   # must trigger the rule
-contracts/fixtures/SG-XXXX-fixed.rs        # must be clean
-```
-
-Open issues: [`label:test-contract`](https://github.com/soroguard/soroguard/issues?label=test-contract)
-
-<br/>
-
-### Tier 2 — YAML rule authoring
-
-Some detectors have Rust implementations but no community YAML equivalent. Write the YAML rule so future contributors can extend the pattern without touching Rust.
-
-```bash
-# Branch naming
-git checkout -b rule/SG-XXXX-short-name
-```
-
-<br/>
-
-### Tier 3 — Detector documentation
-
-Write the MDX doc page for each rule: what it catches, why it matters, a vulnerable example, a fixed example, and when to use `#[allow(soroguard::SG-XXXX)]` to suppress.
-
-<br/>
-
-### Tier 4 — Novel detector proposals
-
-Research a Soroban-specific vulnerability class not yet covered. Propose a new `SG-XXXX` with full YAML + test pair. Bonus: implement the Rust detector too.
-
-<br/>
-
-### Contribution workflow
-
-```
-1. Fork → branch (rule/SG-XXXX-name or fix/short-description)
-2. Add rule YAML  →  registry/rules/SG-XXXX.yaml
-3. Add fixtures   →  contracts/fixtures/SG-XXXX-{vulnerable,fixed}.rs
-4. Run tests      →  cargo test
-5. Open PR        →  self-scan runs automatically, badge updates
-```
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the complete guide, style conventions, and review SLA.
-
-<br/>
-
----
-
-## 🌊 Wave 4 Contribution Guide
-
-SoroGuard is participating in **[Drips Wave 4](https://drips.network)**. Every merged contribution earns drip weight proportional to tier and impact.
-
-| Tier | Task | Difficulty | Drip weight |
-|---|---|---|---|
-| 1 | Test contract pair (1 vulnerable + 1 fixed) | ⭐ Beginner | Base |
-| 2 | YAML rule for existing Rust detector | ⭐⭐ Intermediate | 2× |
-| 3 | MDX documentation page for a rule | ⭐⭐ Intermediate | 2× |
-| 4 | Novel detector proposal + implementation | ⭐⭐⭐ Advanced | 4× |
-
-Issues ready for Wave 4 are tagged `wave-4` in the tracker.
-
-<br/>
-
----
-
-## 💡 Why Soroban needs its own tooling
-
-Soroban introduces vulnerability classes with **no EVM equivalent**. Generic auditing tools built for Ethereum will not catch these:
-
-### 1. Storage TTL expiry (`SG-C001`, `SG-C002`)
-Soroban has three distinct storage tiers:
-
-| Tier | Default TTL | Use case |
-|---|---|---|
-| **Temporary** | ~80 ledgers (~7 days) | Short-lived session state |
-| **Persistent** | Manual extension required | Balances, config, positions |
-| **Instance** | Contract lifetime | Admin keys, global params |
-
-Storing balances in temporary storage, or forgetting to call `extend_ttl()` on persistent entries, **silently deletes on-chain state**. No revert. No event. No warning. This is invisible to any EVM-based scanner.
-
-### 2. Authorization model (`SG-A001`)
-EVM uses implicit `msg.sender` for access control — every call knows its caller automatically. Soroban uses an **explicit `require_auth()` model** where the developer must invoke it manually. Developers coming from EVM habitually skip this step, leaving privileged functions callable by anyone.
-
-### 3. Cross-contract error propagation (`SG-E002`)
-Soroban's host function call model means errors from sub-invocations **do not automatically bubble**. A missing `?` or unmatched `Result` silently discards errors, leaving contract state partially mutated with no signal to the caller.
-
-
-
-
-
+MIT
